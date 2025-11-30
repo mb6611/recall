@@ -61,19 +61,26 @@ pub struct App {
 
 impl App {
     pub fn new(initial_query: String) -> Result<Self> {
-        let cache_dir = dirs::cache_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("recall");
+        // Allow override for testing
+        let cache_dir = std::env::var("RECALL_HOME_OVERRIDE")
+            .map(|h| PathBuf::from(h).join(".cache").join("recall"))
+            .unwrap_or_else(|_| {
+                dirs::cache_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join("recall")
+            });
 
         let index_path = cache_dir.join("index");
         let state_path = cache_dir.join("state.json");
 
         let index = SessionIndex::open_or_create(&index_path)?;
 
-        // Get launch directory
-        let launch_cwd = std::env::current_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
+        // Get launch directory (override for tests)
+        let launch_cwd = std::env::var("RECALL_CWD_OVERRIDE").unwrap_or_else(|_| {
+            std::env::current_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default()
+        });
 
         // Start background indexing
         let (tx, rx) = mpsc::channel();

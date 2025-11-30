@@ -1,0 +1,28 @@
+---
+source: tests/integration.rs
+expression: buffer_to_string(&terminal)
+---
+                                                               │
+  zzzznotfound█                                                │  /  /test/cwd
+                                                               │
+
+  No results. Press  /  to search everywhere.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ↑↓  navigate  │  Esc  quit                                         2 sessions

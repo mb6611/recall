@@ -1,0 +1,28 @@
+---
+source: tests/integration.rs
+expression: buffer_to_string(&terminal)
+---
+                                                              │
+  Search...                                                   │  /  everywhere
+                                                              │
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ↑↓  navigate  │  Esc  quit                                         0 sessions
