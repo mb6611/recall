@@ -7,4 +7,7 @@ pub mod tui;
 pub mod ui;
 
 pub use app::{App, SearchScope};
-pub use session::{Message, Role, SearchResult, Session, SessionSource};
+pub use session::{
+    ListOutput, Message, ReadOutput, Role, SearchOutput, SearchResult, SearchResultOutput,
+    Session, SessionSource, SessionSummary,
+};

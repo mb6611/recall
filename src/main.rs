@@ -1,36 +1,144 @@
 use anyhow::Result;
-use recall::{app::App, session, tui, ui};
+use clap::{Parser, Subcommand};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
+use recall::{app::App, session, session::SessionSource, tui, ui};
 use std::time::Duration;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+mod cli;
+
+#[derive(Parser)]
+#[command(name = "recall")]
+#[command(version, about = "Search and resume Claude Code, Codex CLI, and Factory conversations")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
+    /// Clear index and rebuild from scratch
+    #[arg(long, global = true)]
+    reindex: bool,
+
+    /// Initial search query (for interactive TUI mode)
+    #[arg(trailing_var_arg = true)]
+    query: Vec<String>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Search conversations and output JSON
+    Search {
+        /// Search query
+        #[arg(required = true)]
+        query: Vec<String>,
+
+        /// Filter by source (claude, codex, factory, opencode)
+        #[arg(long, short)]
+        source: Option<String>,
+
+        /// Search within a specific session
+        #[arg(long)]
+        session: Option<String>,
+
+        /// Maximum number of results
+        #[arg(long, short, default_value = "10")]
+        limit: usize,
+
+        /// Number of context messages around each match
+        #[arg(short = 'C', long = "context", default_value = "0")]
+        context: usize,
+
+        /// Only include sessions after this time (e.g., "1 week ago", "2025-12-01")
+        #[arg(long)]
+        since: Option<String>,
+
+        /// Only include sessions before this time
+        #[arg(long)]
+        until: Option<String>,
+    },
+
+    /// List recent sessions and output JSON
+    List {
+        /// Maximum number of sessions
+        #[arg(long, short, default_value = "20")]
+        limit: usize,
+
+        /// Filter by source (claude, codex, factory, opencode)
+        #[arg(long, short)]
+        source: Option<String>,
+
+        /// Only include sessions after this time
+        #[arg(long)]
+        since: Option<String>,
+
+        /// Only include sessions before this time
+        #[arg(long)]
+        until: Option<String>,
+    },
+
+    /// Read a full conversation by session ID and output JSON
+    Read {
+        /// Session ID to read
+        session_id: String,
+    },
+}
 
 fn main() -> Result<()> {
-    // Handle --help and --version
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.iter().any(|a| a == "--help" || a == "-h") {
-        print_help();
-        return Ok(());
-    }
-    if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("recall {}", VERSION);
-        return Ok(());
-    }
+    let cli = Cli::parse();
 
     // Handle --reindex
-    let reindex = args.iter().any(|a| a == "--reindex");
-    if reindex {
+    if cli.reindex {
         clear_index_cache();
     }
 
-    // Collect remaining args as initial search query (excluding flags)
-    let initial_query = args
-        .iter()
-        .filter(|a| !a.starts_with('-'))
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(" ");
+    // Dispatch based on command
+    match cli.command {
+        Some(Command::Search {
+            query,
+            source,
+            session,
+            limit,
+            context,
+            since,
+            until,
+        }) => {
+            let source = parse_source(&source)?;
+            cli::run_search(
+                &query.join(" "),
+                source,
+                session,
+                limit,
+                context,
+                since,
+                until,
+            )
+        }
+        Some(Command::List {
+            limit,
+            source,
+            since,
+            until,
+        }) => {
+            let source = parse_source(&source)?;
+            cli::run_list(limit, source, since, until)
+        }
+        Some(Command::Read { session_id }) => cli::run_read(&session_id),
+        None => {
+            // Interactive TUI mode
+            let initial_query = cli.query.join(" ");
+            run_tui(initial_query)
+        }
+    }
+}
 
+fn parse_source(source: &Option<String>) -> Result<Option<SessionSource>> {
+    match source {
+        Some(s) => SessionSource::parse(s)
+            .ok_or_else(|| anyhow::anyhow!("Invalid source '{}'. Valid: claude, codex, factory, opencode", s))
+            .map(Some),
+        None => Ok(None),
+    }
+}
+
+fn run_tui(initial_query: String) -> Result<()> {
     // Initialize app (starts background indexing automatically)
     let mut app = App::new(initial_query)?;
 
@@ -160,26 +268,6 @@ fn copy_to_clipboard(text: &str) -> Result<()> {
     let mut clipboard = Clipboard::new()?;
     clipboard.set_text(text)?;
     Ok(())
-}
-
-fn print_help() {
-    println!(
-        "recall {} - Search and resume Claude Code, Codex CLI, and Factory conversations
-
-Usage: recall [OPTIONS] [query]
-
-Examples:
-  recall
-  recall foo
-  recall foo bar
-  recall --reindex
-
-Options:
-  -h, --help     Print help
-  -V, --version  Print version
-      --reindex  Clear index and rebuild from scratch",
-        VERSION
-    );
 }
 
 /// Clear the index cache directory

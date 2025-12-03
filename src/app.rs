@@ -505,11 +505,13 @@ fn background_index(index_path: PathBuf, state_path: PathBuf, tx: Sender<IndexMs
             Ok(session) => {
                 if !session.messages.is_empty() {
                     let _ = index.index_session(&mut writer, &session);
-                    state.mark_indexed(file_path);
                 }
+                // Mark as indexed even if empty (so we don't reprocess it)
+                state.mark_indexed(file_path);
             }
             Err(_) => {
-                // Skip failed files silently
+                // Skip failed files (they might be incomplete/corrupted)
+                // Don't mark as indexed so we retry next time
             }
         }
 

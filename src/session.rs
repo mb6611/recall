@@ -1,11 +1,16 @@
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum SessionSource {
+    #[serde(rename = "claude")]
     ClaudeCode,
+    #[serde(rename = "codex")]
     CodexCli,
+    #[serde(rename = "factory")]
     Factory,
+    #[serde(rename = "opencode")]
     OpenCode,
 }
 
@@ -48,7 +53,8 @@ impl SessionSource {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Role {
     User,
     Assistant,
@@ -63,7 +69,7 @@ impl Role {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Message {
     pub role: Role,
     pub content: String,
@@ -146,4 +152,90 @@ pub struct SearchResult {
     pub match_spans: Vec<(usize, usize)>,
     /// Original fragment from Tantivy (for finding match in wrapped text)
     pub match_fragment: String,
+}
+
+// ============================================================================
+// CLI Output Types (JSON serialization for non-interactive mode)
+// ============================================================================
+
+/// Output format for `recall search`
+#[derive(Debug, Serialize)]
+pub struct SearchOutput {
+    pub query: String,
+    pub results: Vec<SearchResultOutput>,
+}
+
+/// Single search result in JSON output
+#[derive(Debug, Serialize)]
+pub struct SearchResultOutput {
+    pub session_id: String,
+    pub source: SessionSource,
+    pub cwd: String,
+    pub timestamp: DateTime<Utc>,
+    pub relevant_messages: Vec<Message>,
+    pub resume_command: String,
+}
+
+/// Output format for `recall list`
+#[derive(Debug, Serialize)]
+pub struct ListOutput {
+    pub sessions: Vec<SessionSummary>,
+}
+
+/// Session summary for list output (no messages)
+#[derive(Debug, Serialize)]
+pub struct SessionSummary {
+    pub session_id: String,
+    pub source: SessionSource,
+    pub cwd: String,
+    pub timestamp: DateTime<Utc>,
+    pub resume_command: String,
+}
+
+/// Output format for `recall read`
+#[derive(Debug, Serialize)]
+pub struct ReadOutput {
+    pub session_id: String,
+    pub source: SessionSource,
+    pub cwd: String,
+    pub timestamp: DateTime<Utc>,
+    pub messages: Vec<Message>,
+    pub resume_command: String,
+}
+
+impl Session {
+    /// Convert to ReadOutput for JSON serialization
+    pub fn to_read_output(&self) -> ReadOutput {
+        let (cmd, args) = self.resume_command();
+        let resume_str = std::iter::once(cmd)
+            .chain(args)
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        ReadOutput {
+            session_id: self.id.clone(),
+            source: self.source,
+            cwd: self.cwd.clone(),
+            timestamp: self.timestamp,
+            messages: self.messages.clone(),
+            resume_command: resume_str,
+        }
+    }
+
+    /// Convert to SessionSummary for list output
+    pub fn to_summary(&self) -> SessionSummary {
+        let (cmd, args) = self.resume_command();
+        let resume_str = std::iter::once(cmd)
+            .chain(args)
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        SessionSummary {
+            session_id: self.id.clone(),
+            source: self.source,
+            cwd: self.cwd.clone(),
+            timestamp: self.timestamp,
+            resume_command: resume_str,
+        }
+    }
 }

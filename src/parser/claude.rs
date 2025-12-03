@@ -19,6 +19,15 @@ struct ClaudeLine {
     git_branch: Option<String>,
     timestamp: Option<String>,
     message: Option<ClaudeMessage>,
+    /// Compaction summary flag (v2.0.56+)
+    #[serde(rename = "isCompactSummary")]
+    is_compact_summary: Option<bool>,
+    /// Transcript-only flag (v2.0.55 compaction, also set in v2.0.56+)
+    #[serde(rename = "isVisibleInTranscriptOnly")]
+    is_visible_in_transcript_only: Option<bool>,
+    /// Meta message flag (slash command prompt expansions)
+    #[serde(rename = "isMeta")]
+    is_meta: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,6 +72,16 @@ impl SessionParser for ClaudeParser {
                 continue;
             }
 
+            // Skip synthetic messages (not actual user input):
+            // - Compaction summaries (v2.0.56+ isCompactSummary, v2.0.55 isVisibleInTranscriptOnly)
+            // - Slash command prompt expansions (isMeta)
+            if entry.is_compact_summary == Some(true)
+                || entry.is_visible_in_transcript_only == Some(true)
+                || entry.is_meta == Some(true)
+            {
+                continue;
+            }
+
             // Extract session metadata from the first valid message
             if session_id.is_none() {
                 session_id = entry.session_id.clone();
@@ -96,13 +115,23 @@ impl SessionParser for ClaudeParser {
                 };
 
                 let content = extract_content(&msg.content);
-                if !content.is_empty() {
-                    messages.push(Message {
-                        role,
-                        content,
-                        timestamp,
-                    });
+                if content.is_empty() {
+                    continue;
                 }
+
+                // Skip slash command expansions (internal Claude Code messages)
+                let trimmed = content.trim_start();
+                if trimmed.starts_with("<command-message>")
+                    || trimmed.starts_with("<command-name>")
+                {
+                    continue;
+                }
+
+                messages.push(Message {
+                    role,
+                    content,
+                    timestamp,
+                });
             }
         }
 

@@ -1,11 +1,23 @@
 use crate::session::{SearchResult, Session, SessionSource};
 use anyhow::{Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tantivy::collector::TopDocs;
-use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, Query, QueryParser};
+use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, Query, QueryParser, TermQuery};
 use tantivy::schema::*;
 use tantivy::snippet::SnippetGenerator;
 use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy};
+
+/// Get the default cache directory for the index
+pub fn default_index_path() -> PathBuf {
+    std::env::var("RECALL_HOME_OVERRIDE")
+        .map(|h| PathBuf::from(h).join(".cache").join("recall").join("index"))
+        .unwrap_or_else(|_| {
+            dirs::cache_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("recall")
+                .join("index")
+        })
+}
 
 /// Wrapper around Tantivy index for session search
 pub struct SessionIndex {
@@ -25,6 +37,11 @@ pub struct SessionIndex {
 }
 
 impl SessionIndex {
+    /// Open existing index or create a new one at the default path
+    pub fn open_default() -> Result<Self> {
+        Self::open_or_create(&default_index_path())
+    }
+
     /// Open existing index or create a new one
     pub fn open_or_create(index_path: &Path) -> Result<Self> {
         std::fs::create_dir_all(index_path)?;
@@ -393,6 +410,29 @@ impl SessionIndex {
         results.truncate(limit);
 
         Ok(results)
+    }
+
+    /// Look up a session by ID and return its file path
+    pub fn get_by_id(&self, session_id: &str) -> Result<Option<PathBuf>> {
+        let searcher = self.reader.searcher();
+
+        let term = tantivy::Term::from_field_text(self.session_id, session_id);
+        let query = TermQuery::new(term, IndexRecordOption::Basic);
+
+        let top_docs = searcher.search(&query, &TopDocs::with_limit(1))?;
+
+        if let Some((_score, doc_addr)) = top_docs.first() {
+            let doc: tantivy::TantivyDocument = searcher.doc(*doc_addr)?;
+
+            let file_path = doc
+                .get_first(self.file_path)
+                .and_then(|v| v.as_str())
+                .map(PathBuf::from);
+
+            Ok(file_path)
+        } else {
+            Ok(None)
+        }
     }
 }
 
