@@ -1,6 +1,6 @@
 # recall&nbsp;&nbsp;&nbsp;[![Mentioned in Awesome Claude Code](https://awesome.re/mentioned-badge.svg)](https://github.com/hesreallyhim/awesome-claude-code)
 
-Search and resume your Claude Code and Codex CLI conversations.
+Search and resume your Claude Code conversations. Also supports Codex, OpenCode and Factory (Droid).
 
 **Tip**: Don't like reading? Tell your agent to use `recall search --help` and it'll search for you.
 
