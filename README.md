@@ -50,8 +50,8 @@ pls find me the last conversation where we deployed to staging, use `recall sear
 ```
 They'll run the `--help` command to learn how the CLI works, and then use it to find your conversation.
 
-## MCP?
-No MCP required. The CLI fulfills the same purpose. See [Ask it to Search for You](#ask-it-to-search-for-you).
+## MCP
+The `recall search` CLI fulfills the same purpose. See [Ask it to Search for You](#ask-it-to-search-for-you).
 
 ## Customize
 
