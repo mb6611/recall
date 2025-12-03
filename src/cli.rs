@@ -19,6 +19,7 @@ pub fn run_search(
     context: usize,
     since: Option<String>,
     until: Option<String>,
+    cwd: Option<String>,
 ) -> Result<()> {
     let index = SessionIndex::open_default()?;
     ensure_index_fresh(&index)?;
@@ -48,6 +49,8 @@ pub fn run_search(
             // Filter by time
             .filter(|r| since_dt.is_none_or(|t| r.session.timestamp >= t))
             .filter(|r| until_dt.is_none_or(|t| r.session.timestamp <= t))
+            // Filter by working directory
+            .filter(|r| cwd.as_ref().is_none_or(|c| r.session.cwd == *c))
             .take(limit)
             .map(|r| {
                 // Load full session to get messages
@@ -220,6 +223,7 @@ pub fn run_list(
     source: Option<SessionSource>,
     since: Option<String>,
     until: Option<String>,
+    cwd: Option<String>,
 ) -> Result<()> {
     let index = SessionIndex::open_default()?;
     ensure_index_fresh(&index)?;
@@ -238,6 +242,8 @@ pub fn run_list(
             // Filter by time
             .filter(|r| since_dt.is_none_or(|t| r.session.timestamp >= t))
             .filter(|r| until_dt.is_none_or(|t| r.session.timestamp <= t))
+            // Filter by working directory
+            .filter(|r| cwd.as_ref().is_none_or(|c| r.session.cwd == *c))
             .take(limit)
             .map(|r| r.session.to_summary())
             .collect(),

@@ -668,3 +668,67 @@ fn test_cli_help() {
     assert!(stdout.contains("list"));
     assert!(stdout.contains("read"));
 }
+
+#[test]
+fn test_cli_search_with_cwd_filter() {
+    let _lock = lock_test();
+    let temp_dir = setup_test_env();
+
+    // Search with matching cwd
+    let (stdout, _stderr, success) = run_cli(
+        &["search", "hello", "--cwd", "/test/project", "--limit", "10"],
+        temp_dir.path(),
+    );
+
+    assert!(success);
+
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let results = json["results"].as_array().unwrap();
+
+    // Should find results with matching cwd
+    assert!(!results.is_empty(), "Should find results with matching cwd");
+    for result in results {
+        assert_eq!(result["cwd"], "/test/project");
+    }
+}
+
+#[test]
+fn test_cli_search_with_cwd_filter_no_match() {
+    let _lock = lock_test();
+    let temp_dir = setup_test_env();
+
+    // Search with non-matching cwd
+    let (stdout, _stderr, success) = run_cli(
+        &["search", "hello", "--cwd", "/nonexistent/path", "--limit", "10"],
+        temp_dir.path(),
+    );
+
+    assert!(success);
+
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let results = json["results"].as_array().unwrap();
+
+    assert!(results.is_empty(), "Should have no results for non-matching cwd");
+}
+
+#[test]
+fn test_cli_list_with_cwd_filter() {
+    let _lock = lock_test();
+    let temp_dir = setup_test_env();
+
+    // List with matching cwd
+    let (stdout, _stderr, success) = run_cli(
+        &["list", "--cwd", "/test/project", "--limit", "10"],
+        temp_dir.path(),
+    );
+
+    assert!(success);
+
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let sessions = json["sessions"].as_array().unwrap();
+
+    // Should find sessions with matching cwd
+    for session in sessions {
+        assert_eq!(session["cwd"], "/test/project");
+    }
+}

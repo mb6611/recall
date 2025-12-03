@@ -53,6 +53,10 @@ enum Command {
         /// Only include sessions before this time
         #[arg(long)]
         until: Option<String>,
+
+        /// Filter by working directory (exact match)
+        #[arg(long)]
+        cwd: Option<String>,
     },
 
     /// List recent sessions and output JSON
@@ -72,6 +76,10 @@ enum Command {
         /// Only include sessions before this time
         #[arg(long)]
         until: Option<String>,
+
+        /// Filter by working directory (exact match)
+        #[arg(long)]
+        cwd: Option<String>,
     },
 
     /// Read a full conversation by session ID and output JSON
@@ -99,6 +107,7 @@ fn main() -> Result<()> {
             context,
             since,
             until,
+            cwd,
         }) => {
             let source = parse_source(&source)?;
             cli::run_search(
@@ -109,6 +118,7 @@ fn main() -> Result<()> {
                 context,
                 since,
                 until,
+                cwd,
             )
         }
         Some(Command::List {
@@ -116,9 +126,10 @@ fn main() -> Result<()> {
             source,
             since,
             until,
+            cwd,
         }) => {
             let source = parse_source(&source)?;
-            cli::run_list(limit, source, since, until)
+            cli::run_list(limit, source, since, until, cwd)
         }
         Some(Command::Read { session_id }) => cli::run_read(&session_id),
         None => {
