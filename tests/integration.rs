@@ -461,3 +461,210 @@ fn test_ui_with_query_everywhere_scope_no_results() {
 
     assert_snapshot!(buffer_to_string(&terminal));
 }
+
+// =============================================================================
+// CLI Integration Tests
+// =============================================================================
+
+use std::process::Command;
+
+fn recall_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_recall"))
+}
+
+fn run_cli(args: &[&str], home_override: &std::path::Path) -> (String, String, bool) {
+    let output = Command::new(recall_bin())
+        .args(args)
+        .env("RECALL_HOME_OVERRIDE", home_override)
+        .output()
+        .expect("Failed to run recall");
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    (stdout, stderr, output.status.success())
+}
+
+#[test]
+fn test_cli_search_returns_json() {
+    let _lock = lock_test();
+    let temp_dir = setup_test_env();
+
+    let (stdout, _stderr, success) = run_cli(
+        &["search", "hello", "--limit", "5"],
+        temp_dir.path(),
+    );
+
+    assert!(success, "CLI search should succeed");
+
+    // Parse as JSON
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .expect("Output should be valid JSON");
+
+    assert_eq!(json["query"], "hello");
+    assert!(json["results"].is_array());
+}
+
+#[test]
+fn test_cli_search_finds_fixture_content() {
+    let _lock = lock_test();
+    let temp_dir = setup_test_env();
+
+    let (stdout, _stderr, success) = run_cli(
+        &["search", "hello", "--limit", "10"],
+        temp_dir.path(),
+    );
+
+    assert!(success);
+
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let results = json["results"].as_array().unwrap();
+
+    // Should find the Claude fixture session
+    assert!(
+        results.iter().any(|r| r["session_id"] == "test-claude-123"),
+        "Should find Claude fixture session"
+    );
+}
+
+#[test]
+fn test_cli_search_with_source_filter() {
+    let _lock = lock_test();
+    let temp_dir = setup_test_env();
+
+    let (stdout, _stderr, success) = run_cli(
+        &["search", "hello", "--source", "claude", "--limit", "10"],
+        temp_dir.path(),
+    );
+
+    assert!(success);
+
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let results = json["results"].as_array().unwrap();
+
+    // All results should be Claude
+    for result in results {
+        assert_eq!(result["source"], "claude");
+    }
+}
+
+#[test]
+fn test_cli_search_no_results() {
+    let _lock = lock_test();
+    let temp_dir = setup_test_env();
+
+    let (stdout, _stderr, success) = run_cli(
+        &["search", "xyznonexistent12345"],
+        temp_dir.path(),
+    );
+
+    assert!(success);
+
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let results = json["results"].as_array().unwrap();
+
+    assert!(results.is_empty(), "Should have no results for nonexistent query");
+}
+
+#[test]
+fn test_cli_list_returns_json() {
+    let _lock = lock_test();
+    let temp_dir = setup_test_env();
+
+    let (stdout, _stderr, success) = run_cli(
+        &["list", "--limit", "5"],
+        temp_dir.path(),
+    );
+
+    assert!(success, "CLI list should succeed");
+
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .expect("Output should be valid JSON");
+
+    assert!(json["sessions"].is_array());
+}
+
+#[test]
+fn test_cli_list_with_source_filter() {
+    let _lock = lock_test();
+    let temp_dir = setup_test_env();
+
+    let (stdout, _stderr, success) = run_cli(
+        &["list", "--source", "codex", "--limit", "10"],
+        temp_dir.path(),
+    );
+
+    assert!(success);
+
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let sessions = json["sessions"].as_array().unwrap();
+
+    // All sessions should be Codex
+    for session in sessions {
+        assert_eq!(session["source"], "codex");
+    }
+}
+
+#[test]
+fn test_cli_read_returns_session() {
+    let _lock = lock_test();
+    let temp_dir = setup_test_env();
+
+    let (stdout, _stderr, success) = run_cli(
+        &["read", "test-claude-123"],
+        temp_dir.path(),
+    );
+
+    assert!(success, "CLI read should succeed");
+
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .expect("Output should be valid JSON");
+
+    assert_eq!(json["session_id"], "test-claude-123");
+    assert_eq!(json["source"], "claude");
+    assert!(json["messages"].is_array());
+    assert!(!json["messages"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn test_cli_read_nonexistent_session() {
+    let _lock = lock_test();
+    let temp_dir = setup_test_env();
+
+    let (_stdout, stderr, success) = run_cli(
+        &["read", "nonexistent-session-id"],
+        temp_dir.path(),
+    );
+
+    assert!(!success, "Should fail for nonexistent session");
+    assert!(stderr.contains("Session not found"), "Should show error message");
+}
+
+#[test]
+fn test_cli_invalid_source() {
+    let _lock = lock_test();
+    let temp_dir = setup_test_env();
+
+    let (_stdout, stderr, success) = run_cli(
+        &["search", "test", "--source", "invalid"],
+        temp_dir.path(),
+    );
+
+    assert!(!success, "Should fail for invalid source");
+    assert!(stderr.contains("Invalid source"), "Should show error message");
+}
+
+#[test]
+fn test_cli_help() {
+    let _lock = lock_test();
+    let temp_dir = setup_test_env();
+
+    let (stdout, _stderr, success) = run_cli(
+        &["--help"],
+        temp_dir.path(),
+    );
+
+    assert!(success);
+    assert!(stdout.contains("search"));
+    assert!(stdout.contains("list"));
+    assert!(stdout.contains("read"));
+}
