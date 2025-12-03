@@ -36,7 +36,7 @@ Bump type: $ARGUMENTS (patch if not specified)
    - Commit: "Update recall to vX.Y.Z"
    - Push
 
-9. Verify:
+9. Verify Homebrew:
    ```bash
    brew update && brew upgrade zippoxer/tap/recall
 
@@ -46,3 +46,8 @@ Bump type: $ARGUMENTS (patch if not specified)
    sleep 2 && tmux capture-pane -t test -p
    tmux kill-session -t test
    ```
+
+10. Verify WinGet (automated via GitHub Actions):
+    - Check for PR at https://github.com/microsoft/winget-pkgs/pulls?q=is:pr+zippoxer.recall
+    - The `publish-winget` job automatically submits a PR to winget-pkgs for non-prerelease versions
+    - PRs are typically merged within 24-48 hours by the winget-pkgs maintainers

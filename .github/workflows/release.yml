@@ -97,3 +97,16 @@ jobs:
             artifacts/**/*.tar.gz
             artifacts/**/*.zip
           generate_release_notes: true
+
+  publish-winget:
+    name: Publish to WinGet
+    needs: release
+    runs-on: windows-latest
+    # Skip pre-release versions (e.g., v0.2.1-rc1)
+    if: ${{ !contains(github.ref_name, '-') }}
+    steps:
+      - uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: zippoxer.recall
+          installers-regex: '\.zip$'
+          token: ${{ secrets.WINGET_TOKEN }}
