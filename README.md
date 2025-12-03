@@ -39,7 +39,7 @@ recall
 | `Esc` | Quit |
 
 ## Ask it to Search for You
-Simply add this to your Claude Code or Codex prompts:
+Simply tell your agent:
 ```
 use `recall search --help`
 ```
@@ -48,7 +48,6 @@ Example:
 ```
 pls find me the last conversation where we deployed to staging, use `recall search --help`
 ```
-They'll run the `--help` command to learn how the CLI works, and then use it to find your conversation.
 
 ## MCP
 No MCP required. The `recall search` CLI fulfills the same purpose. See [Ask it to Search for You](#ask-it-to-search-for-you).
