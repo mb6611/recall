@@ -2,6 +2,8 @@
 
 Search and resume your Claude Code and Codex CLI conversations.
 
+**Tip**: Don't like reading? Tell your agent to use `recall search --help` and it'll search for you.
+
 ![screenshot](screenshot-dark.png)
 
 ## Install
