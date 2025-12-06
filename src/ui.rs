@@ -301,29 +301,52 @@ fn render_results_list(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn render_preview(frame: &mut Frame, app: &mut App, area: Rect) {
     let t = theme();
+
+    // Store preview area for mouse click detection
+    app.preview_area = (area.x, area.y, area.width, area.height);
+
     let Some(result) = app.selected_result() else {
+        app.message_line_ranges.clear();
         return;
     };
 
+    // Extract values we need before mutating app
+    let file_path = result.session.file_path.clone();
+    let matched_message_index = result.matched_message_index;
+    let match_fragment = result.match_fragment.clone();
+
     // Load the full session for preview
-    let session = match crate::parser::parse_session_file(&result.session.file_path) {
+    let session = match crate::parser::parse_session_file(&file_path) {
         Ok(s) => s,
         Err(_) => {
+            app.message_line_ranges.clear();
             return;
         }
     };
 
+    // Store message count for navigation
+    app.preview_message_count = session.messages.len();
+
+    // Determine focused message (default to matched message)
+    let focused_idx = app.focused_message.unwrap_or(matched_message_index);
+
     // Build preview lines with chat bubble style
     let mut lines: Vec<Line> = Vec::new();
-    let bubble_width = area.width.saturating_sub(4) as usize;
+    // Reserve chars for: focus indicator (1-2) + bubble padding (2 left/right)
+    let bubble_width = area.width.saturating_sub(5) as usize;
 
-    let mut matched_line: Option<usize> = None;
+    // Track line ranges for each message (start, end) for mouse click mapping
+    let mut message_line_ranges: Vec<(usize, usize)> = Vec::new();
+    // Track line index where each message starts (for scrolling)
+    let mut message_start_lines: Vec<usize> = Vec::new();
 
     for (i, message) in session.messages.iter().enumerate() {
-        // Track where the matched message starts
-        if i == result.matched_message_index {
-            matched_line = Some(lines.len());
-        }
+        // Track where this message starts
+        message_start_lines.push(lines.len());
+
+        let is_focused = i == focused_idx;
+        let is_expanded = app.expanded_messages.contains(&i);
+
         let (accent_color, msg_bg) = match message.role {
             Role::User => (t.user_label, t.user_bubble_bg),
             Role::Assistant => match session.source {
@@ -334,6 +357,10 @@ fn render_preview(frame: &mut Frame, app: &mut App, area: Rect) {
             },
         };
 
+        // Focus indicator - ▎ for focused, space for unfocused (same width)
+        let focus_prefix = Span::styled("▎", Style::default().fg(t.focus_indicator));
+        let unfocused_prefix = Span::raw(" ");
+
         // Add spacing between messages
         if i > 0 {
             lines.push(Line::from(""));
@@ -341,19 +368,20 @@ fn render_preview(frame: &mut Frame, app: &mut App, area: Rect) {
 
         // Role label
         let role_label = match message.role {
-            Role::User => " You",
+            Role::User => "You",
             Role::Assistant => match session.source {
-                crate::session::SessionSource::ClaudeCode => " Claude",
-                crate::session::SessionSource::CodexCli => " Codex",
-                crate::session::SessionSource::Factory => " Droid",
-                crate::session::SessionSource::OpenCode => " OpenCode",
+                crate::session::SessionSource::ClaudeCode => "Claude",
+                crate::session::SessionSource::CodexCli => "Codex",
+                crate::session::SessionSource::Factory => "Droid",
+                crate::session::SessionSource::OpenCode => "OpenCode",
             },
         };
 
         let time_str = format_time_ago(message.timestamp);
 
-        // Role header with timestamp
+        // Role header with timestamp and focus indicator
         lines.push(Line::from(vec![
+            if is_focused { focus_prefix.clone() } else { unfocused_prefix.clone() },
             Span::styled(
                 role_label,
                 Style::default().fg(accent_color).add_modifier(Modifier::BOLD),
@@ -366,14 +394,14 @@ fn render_preview(frame: &mut Frame, app: &mut App, area: Rect) {
 
         // Message content with word wrapping
         let wrapped_lines = wrap_text(&message.content, bubble_width);
-        let is_matched = i == result.matched_message_index;
-        let max_lines = 12;
+        let is_matched = i == matched_message_index;
+        let max_lines = if is_expanded { usize::MAX } else { 12 };
 
         // Determine which line indices to show (use Tantivy's fragment for centering)
         let line_indices = select_lines_to_show(
             &wrapped_lines,
             is_matched,
-            &result.match_fragment,
+            &match_fragment,
             max_lines,
         );
         let lines_to_show: Vec<(usize, &str)> = line_indices
@@ -387,25 +415,37 @@ fn render_preview(frame: &mut Frame, app: &mut App, area: Rect) {
             })
             .collect();
 
-        let showing_truncated = wrapped_lines.len() > max_lines;
-        let hidden_count = wrapped_lines.len().saturating_sub(max_lines);
+        let hidden_count = wrapped_lines.len().saturating_sub(12);
+
+        // Track if focused message can be expanded/collapsed
+        if is_focused {
+            app.focused_message_expandable = wrapped_lines.len() > 12 || is_expanded;
+        }
 
         for (line_idx, display_line) in &lines_to_show {
+            let prefix = if is_focused { focus_prefix.clone() } else { unfocused_prefix.clone() };
+
             // Check if this is the truncation placeholder (sentinel value)
             if *line_idx == usize::MAX {
                 let trunc_msg = format!("... ({} more lines)", hidden_count);
-                lines.push(Line::from(Span::styled(
-                    format!(" {:<width$}", trunc_msg, width = bubble_width + 1),
-                    Style::default().fg(t.dim_fg).bg(msg_bg),
-                )));
+                lines.push(Line::from(vec![
+                    prefix,
+                    Span::styled(
+                        format!(" {:<width$}", trunc_msg, width = bubble_width + 1),
+                        Style::default().fg(t.dim_fg).bg(msg_bg),
+                    ),
+                ]));
                 continue;
             }
 
             let content_len = display_line.chars().count();
             let right_pad = bubble_width.saturating_sub(content_len);
 
-            // Build line: [1 space padding] [content] [right padding to fill width]
-            let mut spans = vec![Span::styled(" ", Style::default().bg(msg_bg))];
+            // Build line: [focus indicator] [1 space padding] [content] [right padding to fill width]
+            let mut spans = vec![
+                prefix,
+                Span::styled(" ", Style::default().bg(msg_bg)),
+            ];
 
             if !display_line.is_empty() {
                 let highlighted = highlight_matches_owned(display_line, &app.query);
@@ -418,26 +458,23 @@ fn render_preview(frame: &mut Frame, app: &mut App, area: Rect) {
             lines.push(Line::from(spans));
         }
 
-        // Show truncation indicator for matched messages
-        if showing_truncated && is_matched {
-            let trunc_msg = format!("... ({} lines total)", wrapped_lines.len());
-            lines.push(Line::from(Span::styled(
-                format!(" {:<width$}", trunc_msg, width = bubble_width + 1),
-                Style::default().fg(t.dim_fg).bg(msg_bg),
-            )));
-        }
+        // Record the line range for this message
+        message_line_ranges.push((message_start_lines[i], lines.len()));
     }
+
+    // Store message line ranges for mouse click detection
+    app.message_line_ranges = message_line_ranges;
 
     // Clamp scroll to valid range (leave at least one screen of content)
     let visible_height = area.height as usize;
     let max_scroll = lines.len().saturating_sub(visible_height.min(lines.len()));
     app.preview_scrollable = max_scroll > 0;
 
-    // Auto-scroll to matched message when pending (triggered by selection/query change)
+    // Auto-scroll to focused message when pending (triggered by selection change or navigation)
     if app.pending_auto_scroll {
-        if let Some(line) = matched_line {
-            // Scroll to show matched message with some context above
-            app.preview_scroll = line.saturating_sub(3).min(max_scroll);
+        if let Some(&start_line) = message_start_lines.get(focused_idx) {
+            // Scroll to show focused message with some context above
+            app.preview_scroll = start_line.saturating_sub(2).min(max_scroll);
         }
         app.pending_auto_scroll = false;
     }
@@ -480,12 +517,28 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 Span::styled(" copy ID ", label),
             ]);
         }
-        // Show Pg↑/↓ hint only if terminal is wide enough and preview is scrollable
-        if area.width > 90 && app.preview_scrollable {
+        // Show Pg↑/↓ hint only if terminal is wide enough and there are messages
+        if area.width > 90 && app.preview_message_count > 1 {
             spans.extend([
                 Span::styled(" │ ", dim),
                 Span::styled(" Pg↑/↓ ", keycap),
-                Span::styled(" scroll ", label),
+                Span::styled(" message ", label),
+            ]);
+        }
+        // Show Space expand/collapse hint if terminal is wide enough and message is expandable
+        if area.width > 110 && app.focused_message_expandable {
+            // Check if focused message is currently expanded
+            let is_expanded = if let Some(result) = app.selected_result() {
+                let focused = app.focused_message.unwrap_or(result.matched_message_index);
+                app.expanded_messages.contains(&focused)
+            } else {
+                false
+            };
+            let action = if is_expanded { " collapse " } else { " expand " };
+            spans.extend([
+                Span::styled(" │ ", dim),
+                Span::styled(" Space ", keycap),
+                Span::styled(action, label),
             ]);
         }
         spans.extend([

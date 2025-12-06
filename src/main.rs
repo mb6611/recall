@@ -180,6 +180,10 @@ fn run_tui(initial_query: String) -> Result<()> {
 }
 
 fn run(terminal: &mut tui::Tui, app: &mut App) -> Result<()> {
+    // Track last click for double-click detection
+    let mut last_click: Option<(std::time::Instant, u16, u16)> = None;
+    const DOUBLE_CLICK_MS: u128 = 400;
+
     loop {
         // Poll for indexing updates
         app.poll_index_updates();
@@ -214,9 +218,10 @@ fn run(terminal: &mut tui::Tui, app: &mut App) -> Result<()> {
                     KeyCode::Home => app.on_home(),
                     KeyCode::End => app.on_end(),
                     KeyCode::Delete => app.on_delete(),
-                    KeyCode::PageUp => app.scroll_preview_up(15),
-                    KeyCode::PageDown => app.scroll_preview_down(15),
+                    KeyCode::PageUp => app.focus_prev_message(),
+                    KeyCode::PageDown => app.focus_next_message(),
                     KeyCode::Backspace => app.on_backspace(),
+                    KeyCode::Char(' ') => app.toggle_focused_expansion(),
                     KeyCode::Char('/') => app.toggle_scope(),
                     KeyCode::Char(c) => app.on_char(c),
                     _ => {}
@@ -224,6 +229,27 @@ fn run(terminal: &mut tui::Tui, app: &mut App) -> Result<()> {
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::ScrollUp => app.scroll_preview_up(3),
                     MouseEventKind::ScrollDown => app.scroll_preview_down(3),
+                    MouseEventKind::Down(event::MouseButton::Left) => {
+                        let now = std::time::Instant::now();
+                        let (x, y) = (mouse.column, mouse.row);
+
+                        // Check for double-click
+                        let is_double_click = if let Some((last_time, lx, ly)) = last_click {
+                            now.duration_since(last_time).as_millis() < DOUBLE_CLICK_MS
+                                && lx == x && ly == y
+                        } else {
+                            false
+                        };
+
+                        if app.click_preview_message(x, y) {
+                            if is_double_click {
+                                app.toggle_focused_expansion();
+                                last_click = None; // Reset after double-click
+                            } else {
+                                last_click = Some((now, x, y));
+                            }
+                        }
+                    }
                     _ => {}
                 },
                 _ => {}

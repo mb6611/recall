@@ -2,6 +2,7 @@ use crate::index::{discover_and_sort_files, index_files, IndexProgress, IndexSta
 use crate::parser;
 use crate::session::{SearchResult, Session};
 use anyhow::Result;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
@@ -40,6 +41,18 @@ pub struct App {
     pub list_scroll: usize,
     /// Preview scroll offset
     pub preview_scroll: usize,
+    /// Currently focused message index in preview (None = auto-focus on matched message)
+    pub focused_message: Option<usize>,
+    /// Set of expanded message indices (shown in full, not truncated)
+    pub expanded_messages: HashSet<usize>,
+    /// Total message count in current preview (for navigation bounds)
+    pub preview_message_count: usize,
+    /// Whether the focused message can be expanded/collapsed
+    pub focused_message_expandable: bool,
+    /// Line ranges for each message in preview (start_line, end_line) for mouse click mapping
+    pub message_line_ranges: Vec<(usize, usize)>,
+    /// Preview area bounds (x, y, width, height) for mouse hit testing
+    pub preview_area: (u16, u16, u16, u16),
     /// Whether to auto-scroll preview to matched message
     pub pending_auto_scroll: bool,
     /// Whether preview has more content than visible (for scroll hint)
@@ -110,6 +123,12 @@ impl App {
             selected: 0,
             list_scroll: 0,
             preview_scroll: 0,
+            focused_message: None,
+            expanded_messages: HashSet::new(),
+            preview_message_count: 0,
+            focused_message_expandable: false,
+            message_line_ranges: Vec::new(),
+            preview_area: (0, 0, 0, 0),
             pending_auto_scroll: false,
             preview_scrollable: false,
             should_quit: false,
@@ -427,6 +446,9 @@ impl App {
         // since it depends on wrapped line counts
         self.pending_auto_scroll = true;
         self.preview_scroll = 0;
+        // Reset focus and expansions when switching sessions
+        self.focused_message = None;
+        self.expanded_messages.clear();
     }
 
     /// Scroll preview up
@@ -439,9 +461,81 @@ impl App {
         self.preview_scroll = self.preview_scroll.saturating_add(lines);
     }
 
+    /// Navigate to previous message in preview
+    pub fn focus_prev_message(&mut self) {
+        if self.preview_message_count == 0 {
+            return;
+        }
+        let matched_idx = self
+            .selected_result()
+            .map(|r| r.matched_message_index)
+            .unwrap_or(0);
+        let current = self.focused_message.unwrap_or(matched_idx);
+        if current > 0 {
+            self.focused_message = Some(current - 1);
+            self.pending_auto_scroll = true;
+        }
+    }
+
+    /// Navigate to next message in preview
+    pub fn focus_next_message(&mut self) {
+        if self.preview_message_count == 0 {
+            return;
+        }
+        let matched_idx = self
+            .selected_result()
+            .map(|r| r.matched_message_index)
+            .unwrap_or(0);
+        let current = self.focused_message.unwrap_or(matched_idx);
+        if current + 1 < self.preview_message_count {
+            self.focused_message = Some(current + 1);
+            self.pending_auto_scroll = true;
+        }
+    }
+
+    /// Toggle expansion of the focused message
+    pub fn toggle_focused_expansion(&mut self) {
+        if self.preview_message_count == 0 {
+            return;
+        }
+        let matched_idx = self
+            .selected_result()
+            .map(|r| r.matched_message_index)
+            .unwrap_or(0);
+        let focused = self.focused_message.unwrap_or(matched_idx);
+        if self.expanded_messages.contains(&focused) {
+            self.expanded_messages.remove(&focused);
+        } else {
+            self.expanded_messages.insert(focused);
+        }
+    }
+
     /// Get the currently selected result
     pub fn selected_result(&self) -> Option<&SearchResult> {
         self.results.get(self.selected)
+    }
+
+    /// Handle mouse click in preview area - returns true if a message was clicked
+    pub fn click_preview_message(&mut self, x: u16, y: u16) -> bool {
+        let (px, py, pw, ph) = self.preview_area;
+
+        // Check if click is within preview bounds
+        if x < px || x >= px + pw || y < py || y >= py + ph {
+            return false;
+        }
+
+        // Calculate which line was clicked (accounting for scroll)
+        let clicked_line = (y - py) as usize + self.preview_scroll;
+
+        // Find which message contains this line
+        for (msg_idx, &(start, end)) in self.message_line_ranges.iter().enumerate() {
+            if clicked_line >= start && clicked_line < end {
+                self.focused_message = Some(msg_idx);
+                return true;
+            }
+        }
+
+        false
     }
 }
 
@@ -520,4 +614,276 @@ fn background_index(index_path: PathBuf, state_path: PathBuf, tx: Sender<IndexMs
     let _ = tx.send(IndexMsg::Done {
         total_sessions: files.len(),
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Create a minimal App for testing navigation/expansion features
+    /// This bypasses the index initialization for unit tests
+    fn test_app() -> App {
+        App {
+            query: String::new(),
+            cursor: 0,
+            results: Vec::new(),
+            selected: 0,
+            list_scroll: 0,
+            preview_scroll: 0,
+            focused_message: None,
+            expanded_messages: HashSet::new(),
+            preview_message_count: 0,
+            focused_message_expandable: false,
+            message_line_ranges: Vec::new(),
+            preview_area: (0, 0, 0, 0),
+            pending_auto_scroll: false,
+            preview_scrollable: false,
+            should_quit: false,
+            should_resume: None,
+            should_copy: None,
+            index: SessionIndex::open_or_create(&std::env::temp_dir().join("recall_test_index")).unwrap(),
+            status: None,
+            total_sessions: 0,
+            index_rx: None,
+            indexing: false,
+            search_scope: SearchScope::Everything,
+            launch_cwd: String::new(),
+            search_pending: false,
+            last_input: Instant::now(),
+            index_error: None,
+        }
+    }
+
+    // ==================== focus_prev_message tests ====================
+
+    #[test]
+    fn test_focus_prev_at_first_message_stays() {
+        let mut app = test_app();
+        app.preview_message_count = 5;
+        app.focused_message = Some(0);
+
+        app.focus_prev_message();
+
+        assert_eq!(app.focused_message, Some(0));
+    }
+
+    #[test]
+    fn test_focus_prev_moves_up() {
+        let mut app = test_app();
+        app.preview_message_count = 5;
+        app.focused_message = Some(3);
+
+        app.focus_prev_message();
+
+        assert_eq!(app.focused_message, Some(2));
+    }
+
+    #[test]
+    fn test_focus_prev_from_none_at_zero_stays_none() {
+        let mut app = test_app();
+        app.preview_message_count = 5;
+        app.focused_message = None;
+        // When focused_message is None and no result, defaults to 0
+        // Moving prev from 0 does nothing (already at first)
+
+        app.focus_prev_message();
+
+        // Stays None because we couldn't move (already at first message)
+        assert_eq!(app.focused_message, None);
+    }
+
+    #[test]
+    fn test_focus_prev_no_messages_noop() {
+        let mut app = test_app();
+        app.preview_message_count = 0;
+        app.focused_message = Some(2);
+
+        app.focus_prev_message();
+
+        // Should not change when no messages
+        assert_eq!(app.focused_message, Some(2));
+    }
+
+    // ==================== focus_next_message tests ====================
+
+    #[test]
+    fn test_focus_next_at_last_message_stays() {
+        let mut app = test_app();
+        app.preview_message_count = 5;
+        app.focused_message = Some(4);
+
+        app.focus_next_message();
+
+        assert_eq!(app.focused_message, Some(4));
+    }
+
+    #[test]
+    fn test_focus_next_moves_down() {
+        let mut app = test_app();
+        app.preview_message_count = 5;
+        app.focused_message = Some(2);
+
+        app.focus_next_message();
+
+        assert_eq!(app.focused_message, Some(3));
+    }
+
+    #[test]
+    fn test_focus_next_from_none_uses_matched_index() {
+        let mut app = test_app();
+        app.preview_message_count = 5;
+        app.focused_message = None;
+        // When focused_message is None and no result, defaults to 0
+        // So moving next from 0 goes to 1
+
+        app.focus_next_message();
+
+        assert_eq!(app.focused_message, Some(1));
+    }
+
+    #[test]
+    fn test_focus_next_no_messages_noop() {
+        let mut app = test_app();
+        app.preview_message_count = 0;
+        app.focused_message = Some(2);
+
+        app.focus_next_message();
+
+        // Should not change when no messages
+        assert_eq!(app.focused_message, Some(2));
+    }
+
+    // ==================== toggle_focused_expansion tests ====================
+
+    #[test]
+    fn test_toggle_expands_collapsed_message() {
+        let mut app = test_app();
+        app.preview_message_count = 5;
+        app.focused_message = Some(2);
+
+        app.toggle_focused_expansion();
+
+        assert!(app.expanded_messages.contains(&2));
+    }
+
+    #[test]
+    fn test_toggle_collapses_expanded_message() {
+        let mut app = test_app();
+        app.preview_message_count = 5;
+        app.focused_message = Some(2);
+        app.expanded_messages.insert(2);
+
+        app.toggle_focused_expansion();
+
+        assert!(!app.expanded_messages.contains(&2));
+    }
+
+    #[test]
+    fn test_toggle_no_messages_noop() {
+        let mut app = test_app();
+        app.preview_message_count = 0;
+        app.focused_message = Some(2);
+
+        app.toggle_focused_expansion();
+
+        assert!(app.expanded_messages.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_messages_can_be_expanded() {
+        let mut app = test_app();
+        app.preview_message_count = 5;
+
+        app.focused_message = Some(1);
+        app.toggle_focused_expansion();
+
+        app.focused_message = Some(3);
+        app.toggle_focused_expansion();
+
+        assert!(app.expanded_messages.contains(&1));
+        assert!(app.expanded_messages.contains(&3));
+        assert_eq!(app.expanded_messages.len(), 2);
+    }
+
+    // ==================== click_preview_message tests ====================
+
+    #[test]
+    fn test_click_inside_preview_selects_message() {
+        let mut app = test_app();
+        app.preview_area = (50, 5, 60, 20); // x, y, width, height
+        app.preview_scroll = 0;
+        app.message_line_ranges = vec![
+            (0, 5),   // Message 0: lines 0-4
+            (5, 12),  // Message 1: lines 5-11
+            (12, 18), // Message 2: lines 12-17
+        ];
+
+        // Click on line 7 (y=5+7=12), which is in message 1
+        let clicked = app.click_preview_message(55, 12);
+
+        assert!(clicked);
+        assert_eq!(app.focused_message, Some(1));
+    }
+
+    #[test]
+    fn test_click_outside_preview_returns_false() {
+        let mut app = test_app();
+        app.preview_area = (50, 5, 60, 20);
+        app.message_line_ranges = vec![(0, 5), (5, 12)];
+
+        // Click outside preview area (x too small)
+        let clicked = app.click_preview_message(10, 10);
+
+        assert!(!clicked);
+        assert_eq!(app.focused_message, None);
+    }
+
+    #[test]
+    fn test_click_accounts_for_scroll() {
+        let mut app = test_app();
+        app.preview_area = (50, 5, 60, 20);
+        app.preview_scroll = 10; // Scrolled down 10 lines
+        app.message_line_ranges = vec![
+            (0, 5),   // Message 0: lines 0-4
+            (5, 12),  // Message 1: lines 5-11
+            (12, 25), // Message 2: lines 12-24
+        ];
+
+        // Click at y=5 (top of preview), with scroll=10, actual line = 0 + 10 = 10
+        // Line 10 is in message 1 (lines 5-11)
+        let clicked = app.click_preview_message(55, 5);
+
+        assert!(clicked);
+        assert_eq!(app.focused_message, Some(1));
+    }
+
+    #[test]
+    fn test_click_on_empty_area_returns_false() {
+        let mut app = test_app();
+        app.preview_area = (50, 5, 60, 20);
+        app.preview_scroll = 0;
+        app.message_line_ranges = vec![
+            (0, 3),  // Message 0: lines 0-2
+            (4, 8),  // Message 1: lines 4-7 (gap at line 3)
+        ];
+
+        // Click on line 3 which is between messages
+        let clicked = app.click_preview_message(55, 8); // y=5+3=8 -> line 3
+
+        assert!(!clicked);
+    }
+
+    // ==================== State reset tests ====================
+
+    #[test]
+    fn test_navigation_sets_pending_auto_scroll() {
+        let mut app = test_app();
+        app.preview_message_count = 5;
+        app.focused_message = Some(2);
+        app.pending_auto_scroll = false;
+
+        app.focus_next_message();
+
+        assert!(app.pending_auto_scroll);
+    }
 }

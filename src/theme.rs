@@ -52,6 +52,8 @@ pub struct Theme {
     pub separator_fg: Color,
     /// Scope label text color
     pub scope_label_fg: Color,
+    /// Focus indicator color (left border on focused message in preview)
+    pub focus_indicator: Color,
 }
 
 impl Theme {
@@ -91,6 +93,7 @@ impl Theme {
             scope_key_bg: Color::Rgb(60, 60, 65),     // keycap style
             separator_fg: Color::Rgb(60, 60, 65),     // subtle separator
             scope_label_fg: Color::Rgb(140, 140, 140), // readable but not bright
+            focus_indicator: Color::Rgb(100, 180, 255), // bright blue
         }
     }
 
@@ -121,6 +124,7 @@ impl Theme {
             scope_key_bg: Color::Rgb(200, 200, 205),  // keycap style
             separator_fg: Color::Rgb(195, 195, 200),  // visible on light bg
             scope_label_fg: Color::Rgb(100, 100, 100), // readable on light bg
+            focus_indicator: Color::Rgb(50, 120, 200), // darker blue for light bg
         }
     }
 }
