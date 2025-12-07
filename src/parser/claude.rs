@@ -50,7 +50,6 @@ impl SessionParser for ClaudeParser {
         let file = File::open(path).context("Failed to open file")?;
         let reader = BufReader::with_capacity(64 * 1024, file);
 
-        let mut session_id: Option<String> = None;
         let mut cwd: Option<String> = None;
         let mut git_branch: Option<String> = None;
         let mut latest_timestamp: Option<DateTime<Utc>> = None;
@@ -83,9 +82,6 @@ impl SessionParser for ClaudeParser {
             }
 
             // Extract session metadata from the first valid message
-            if session_id.is_none() {
-                session_id = entry.session_id.clone();
-            }
             if cwd.is_none() {
                 cwd = entry.cwd.clone();
             }
@@ -135,13 +131,13 @@ impl SessionParser for ClaudeParser {
             }
         }
 
-        // Fall back to filename for session ID if not found
-        let session_id = session_id.unwrap_or_else(|| {
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("unknown")
-                .to_string()
-        });
+        // ALWAYS use filename as session ID to avoid cross-contamination
+        // when a session is continued in a different directory (the continuation
+        // file will have the parent's sessionId in its content, but a different filename)
+        let session_id = path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
 
         Ok(Session {
             id: session_id,
